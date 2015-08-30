@@ -1,3 +1,13 @@
+// ==UserScript==
+// @name         BigBrother
+// @namespace    MinTru.com
+// @version      0.1
+// @description  enter something useful. no thanks
+// @author       Quill
+// @match        http://chat.stackexchange.com/rooms/27369/ministry-of-truth
+// @grant        none
+// ==/UserScript==
+
 (function (global) {
     "use strict";
     
@@ -29,42 +39,53 @@
         , FeedTicker: 22
         , UserSuspended: 29
         , UserMerged: 30
-    };
-    var TRANSFORM = {
-          1: 'st'
-        , 2: 'nd'
-        , 3: 'rd'
-        , 4: 'th'
-        , 5: 'th'
-        , 6: 'th'
-        , 7: 'th'
-        , 8: 'th'
-        , 9: 'th'
-        , 10: 'th'
+        // Custom Event Types
+        , Notable: 'notable'
+        , Welcome: 'welcome'
     };
     //
     var KEY_WORDS = {
-          'codereview': 1
-        , 'code': .1
-        , 'off-topic': 1
-        , 'troll': .5
-        , 'review': .5
-        , 'stackoverflow': 1
-        , 'shit': 1
-        , 'crap': 1
-        , 'fuck': 1
-        , 'arse': 1
-        , 'elections': 1
-        , 'moderator': 1
-        , 'mods': 1
+          'codereview': {
+            regex: /(c(ode ?)?r(eview)?)/gi,
+            value: .7
+        },
+        'off-topic': {
+            regex: /(off( |-)topic)/gi,
+            value: .4
+        },
+        'troll':  {
+            value: .5
+        },
+        'stackoverflow':  {
+            regex: /(s(tack ?)?o(verflow)?)/gi,
+            value: .3
+        },
+        'shit':  {
+            regex: /(s((h|\*)(i|\*))t)/gi,
+            value: 1
+        },
+        'crap':  {
+            regex: /(c((r|\*)(a|\*))p)/gi,
+            value: 1
+        },
+        'fuck':  {
+            regex: /(f((u|\*)(c|\*))k)/gi,
+            value: 1
+        },
+        'arse':  {
+            value: 1
+        }
     };
+    function convertToMarkdownLink(value, href){
+        return '[' + value + '](' + href + ')';
+    }
     // storage 
     var key = 'sochatmonitor_data';
     var storage = {
         data: {
             star: [],
             kick: [],
-            notable: []
+            notable: [],
         },
         get: function (name) {
             return storage.data[name];
@@ -77,7 +98,7 @@
                 return;
             }
             if (storage.data[name]) {
-                Array.prototype.push(storage.data[name], value);
+                storage.data[name].push(value);
             } else {
                 storage.data[name] = [value];
             }
@@ -157,9 +178,15 @@
     
     function processMessage(body){
         var sum = 0;
-        for (var i = 0, bodyContent = body.toLowerCase().split(' '); i < bodyContent.length; i++){
-            if (typeof KEY_WORDS[bodyContent[i]] !== 'undefined'){
-                sum += KEY_WORDS[bodyContent[i]];
+        for (var i in KEY_WORDS){
+            var matchedContent = 0;
+            if ('regex' in KEY_WORDS[i]){
+                matchedContent = (body.match(KEY_WORDS[i].regex) === null ? 0 : body.match(KEY_WORDS[i].regex).length);
+            } else {
+                matchedContent = (body.split(i).length === 1 ? 0 : body.split(i).length / 2)
+            }
+            if (matchedContent != 0){
+                sum += matchedContent * KEY_WORDS[i].value;
             }
         }
         return sum >= 1 ? sum : false;
@@ -169,50 +196,41 @@
         //console.log(evt);
         switch (evt.event_type) {
             case EVENT_TYPES.MessagePosted:
-                //Check if command
                 if (USERNAME == evt.user_name){ return; }
                 var sum = processMessage(evt.content);
                 if (sum >= 1){
+                    storage.add('notable', evt);
                     emit({event_type: 'notable', sum: sum, evt: evt});
                 }
                 break;
             case EVENT_TYPES.MessageStarred:
                 storage.add('star', evt);
                 if (report){ console.log('star registered in', evt.room_name); }
-                emit(evt);
                 break;
         }
         emit(evt);
-        storage.save();
-    }
-    function markdown(value, href){
-        return '[' + value + '](' + href + ')';
     }
 
     function emit(evt) {
-        //var kicker = evt.user_name;
-        //var kickee_id = evt.target_user_id;
-        //var kicked = $('.user-' + kickee_id + ':first .username:first').text() || kickee_id;
-        var bodyText;
-        var send = false;
-        var url = (typeof evt.url !== 'undefined');
+        var bodyText = '',
+            send     = false;
         //console.log(evt);
-        var afterEffects = function(){};
+        var afterEffects = '';
         switch(evt.event_type){
-            case 'welcome':
+            case EVENT_TYPES.Welcome:
                 bodyText = '*Three minutes hate initialising.*';
                 send = true;
                 break;
-            case 'notable':
+            case EVENT_TYPES.Notable:
                 bodyText = ['Notable post detected in', evt.evt.room_name, 'by', evt.evt.user_name + ';', 'Notariety level:', evt.sum].join(' ');
-                afterEffects = function(){emit({event_type: 'message', post_id: evt.evt.message_id, url:true})};
+                afterEffects = 'http://chat.stackexchange.com/transcript/message/' + evt.evt.message_id;
                 send = true;
                 break;
             case EVENT_TYPES.UserEntered:
                 bodyText = [
                       evt.user_name
                     , 'joined'
-                    , markdown(evt.room_name, 'http://chat.stackexchange.com/rooms/' + evt.room_id)  + '.'
+                    , convertToMarkdownLink(evt.room_name, 'http://chat.stackexchange.com/rooms/' + evt.room_id)  + '.'
                     , roomid != evt.room_id ? '' : 
                         [
                               'Welcome'
@@ -223,58 +241,53 @@
                 break;
             case EVENT_TYPES.UserLeft:
                 bodyText = [
-                      markdown(evt.user_name, 'http://chat.stackexchange.com/users/' + evt.user_id)
+                      convertToMarkdownLink(evt.user_name, 'http://chat.stackexchange.com/users/' + evt.user_id)
                     , 'left'
-                    , markdown(evt.room_name, 'http://chat.stackexchange.com/rooms/' + evt.room_id)
+                    , convertToMarkdownLink(evt.room_name, 'http://chat.stackexchange.com/rooms/' + evt.room_id)
                     ].join(' ');
                 send = true;
                 break;
             case EVENT_TYPES.MessageStarred:
-                var s = 'starred';
-                if (typeof evt.message_stars === 'undefined'){
-                    s = 'un' + s;
-                } else {
-                    var starValues = evt.message_stars.toString().split('');
-                    s = [
-                          'became the'
-                        , evt.message_stars + TRANSFORM[starValues[starValues.length - 1]]
-                        , 'person to star'
-                    ].join(' ');
-                }
+                //console.log(evt);
                 bodyText = [
                       evt.user_name
-                    , s
-                    , markdown('this message', 'http://chat.stackexchange.com/transcript/message/' + evt.message_id)
+                    , ('message_stars' in evt ? '' : 'un') + 'starred'
+                    , convertToMarkdownLink('this message', 'http://chat.stackexchange.com/transcript/message/' + evt.message_id)
                     , 'in'
-                    , markdown(evt.room_name, 'http://chat.stackexchange.com/rooms/' + evt.room_id)
+                    , convertToMarkdownLink(evt.room_name, 'http://chat.stackexchange.com/rooms/' + evt.room_id)
                     ].join(' ');
                 send = true;
                 break;
-            /*case EVENT_TYPES.MessageReply:
-                bodyText = [evt.user_name, 'pinged you in', evt.room_name].join(' ');
-                send = true;
-                break;*/
-            case 'message':
-                bodyText = 'http://chat.stackexchange.com/transcript/message/' + evt.post_id;
-                send = true;
+            default:
+                return;
                 break;
         }
+        if (!send){ return; }
         var d = new Date(); 
         var time = [d.getHours(), d.getMinutes(), d.getSeconds()].join(':');
-        if (!send){ return;}
-        bodyText = url ? bodyText : [time, 'BB>', bodyText].join(' ');
+        bodyText = [time, 'BB>', bodyText].join(' ');
         console.log(bodyText);
+        setTimeout(function(){
+            sendMessageToAPI(bodyText);
+        }, 5000);
+        if (afterEffects != ''){
+            setTimeout(function(){
+                sendMessageToAPI(afterEffects);
+                }, 7000);
+        }
+        storage.save();
+    }
+    function sendMessageToAPI(bodyText){
         setTimeout(function(){
             $.ajax({
                 type: 'POST',
-                url: '/chats/' + roomid + '/messages/new',
+                url: ['/chats/', roomid, '/messages/new'].join(''),
                 data: {
                     fkey: fkey().fkey,
                     text: bodyText
                 }
             });
-        }, 7000);
-        afterEffects();
+        }, 3000);
     }
 
     global.reporter = {
@@ -333,7 +346,7 @@
                 break;
                 default: 
                     return 'there is no storage for `' + what + '`';
-                break
+                break;
             }
             storage.save();
         }
