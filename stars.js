@@ -13,6 +13,7 @@
     
     //username
     var USERNAME = 'BigBrother';
+    var WELCOME_TEXT = '*Three minutes hate initialising.*';
     //magic numbers
     var EVENT_TYPES = {
           MessagePosted: 1
@@ -45,20 +46,12 @@
     };
     //
     var KEY_WORDS = {
-          'codereview': {
-            regex: /(c(ode ?)?r(eview)?)/gi,
-            value: .7
-        },
         'off-topic': {
             regex: /(off( |-)topic)/gi,
             value: .4
         },
         'troll':  {
             value: .5
-        },
-        'stackoverflow':  {
-            regex: /(s(tack ?)?o(verflow)?)/gi,
-            value: .3
         },
         'shit':  {
             regex: /(s((h|\*)(i|\*))t)/gi,
@@ -86,6 +79,7 @@
             star: [],
             kick: [],
             notable: [],
+            users: {}
         },
         get: function (name) {
             return storage.data[name];
@@ -102,6 +96,19 @@
             } else {
                 storage.data[name] = [value];
             }
+        },
+        modify_stars: function(name, room, value){
+            if (!storage.data.users){
+                storage.add('users', {});
+            }
+            if (!(storage.contains('users', name))){
+                storage.data.users[name] = {};
+            }
+            if(!(room in storage.data.users[name])){
+                storage.data.users[name][room] = {stars: 20, starred_posts: []};
+            }
+            storage.data.users[name][room].stars--;
+            storage.data.users[name][room].starred_posts.push(value);
         },
         remove: function (name, value) {
             if (storage.contains(name, value)) {
@@ -181,15 +188,20 @@
         for (var i in KEY_WORDS){
             var matchedContent = 0;
             if ('regex' in KEY_WORDS[i]){
-                matchedContent = (body.match(KEY_WORDS[i].regex) === null ? 0 : body.match(KEY_WORDS[i].regex).length);
+                matchedContent = (body.match(KEY_WORDS[i].regex) == null ? 0 : body.match(KEY_WORDS[i].regex).length);
             } else {
-                matchedContent = (body.split(i).length === 1 ? 0 : body.split(i).length / 2)
+                matchedContent = (body.split(' ' + i + ' ').length === 1 ? 0 : body.split(i).length / 2)
             }
             if (matchedContent != 0){
+                matchedContent > 0 ? console.log([matchedContent, 'instances of', i].join(' ')) : '';
                 sum += matchedContent * KEY_WORDS[i].value;
             }
         }
         return sum >= 1 ? sum : false;
+    }
+    function processStars(evt){
+        console.log(evt);
+        storage.modify_stars(evt.user_name, evt.room_name, {post_id: evt.post_id});
     }
 
     function processEvent(evt) {
@@ -200,15 +212,16 @@
                 var sum = processMessage(evt.content);
                 if (sum >= 1){
                     storage.add('notable', evt);
-                    emit({event_type: 'notable', sum: sum, evt: evt});
+                    //emit({event_type: 'notable', sum: sum, evt: evt});
                 }
                 break;
             case EVENT_TYPES.MessageStarred:
+                processStars(evt);
                 storage.add('star', evt);
                 if (report){ console.log('star registered in', evt.room_name); }
                 break;
         }
-        emit(evt);
+        //emit(evt);
     }
 
     function emit(evt) {
@@ -218,7 +231,7 @@
         var afterEffects = '';
         switch(evt.event_type){
             case EVENT_TYPES.Welcome:
-                bodyText = '*Three minutes hate initialising.*';
+                bodyText = WELCOME_TEXT;
                 send = true;
                 break;
             case EVENT_TYPES.Notable:
